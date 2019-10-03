@@ -371,7 +371,7 @@ def main():
         scheduler_module = load_module("nodewatcher.plugins." + config.scheduler)
 
         instance_id = _get_metadata("instance-id")
-        hostname = _get_metadata("local-hostname")
+        hostname = _get_metadata("local-hostname").split()[0]
         instance_type = _get_metadata("instance-type")
         log.info("Instance id is %s, hostname is %s, instance type is %s", instance_id, hostname, instance_type)
         asg_name = get_asg_name(config.stack_name, config.region, config.proxy_config)
