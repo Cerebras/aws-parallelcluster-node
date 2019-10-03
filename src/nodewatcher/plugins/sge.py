@@ -26,6 +26,35 @@ from common.utils import check_command_output
 
 log = logging.getLogger(__name__)
 
+# CEREBRAS MODIFICATION
+# =====================
+# Copied below implementation from src/jobwatcher/plugins/sge.py
+def _get_required_slots(instance_properties, max_size):
+    """Compute the total number of slots required by pending jobs."""
+
+    # First construct a list of available slots per node
+    avail_slots = []
+    nodes = get_compute_nodes_info()
+    for node in nodes.values():
+        avail_slots.append(instance_properties.get("slots") - int(node.slots_used) - int(node.slots_reserved))
+    avail_slots.sort()
+    logging.info("slots before job match: %s", str(avail_slots))
+
+    max_cluster_slots = max_size * instance_properties.get("slots")
+    pending_jobs = get_pending_jobs_info(max_slots_filter=max_cluster_slots, skip_if_state=SGE_HOLD_STATE)
+    slots = 0
+    for job in pending_jobs:
+        found_slot = False
+        for i in range(len(avail_slots)):
+            if job.slots <= avail_slots[i]:
+                avail_slots[i] -= job.slots
+                found_slot = True
+                break
+        if not found_slot:
+            slots += job.slots
+    logging.info("slots after job match: %s", str(avail_slots))
+
+    return slots
 
 def hasJobs(hostname):
     try:
@@ -46,9 +75,17 @@ def hasPendingJobs(instance_properties, max_size):
              an error when checking for pending jobs.
     """
     try:
-        max_cluster_slots = max_size * instance_properties.get("slots")
-        pending_jobs = get_pending_jobs_info(max_slots_filter=max_cluster_slots, skip_if_state=SGE_HOLD_STATE)
-        return len(pending_jobs) > 0, False
+        # CEREBRAS MODIFICATION
+        # =====================
+        #
+        # Instead of just looking for pending jobs, instead see if we require
+        # more than 0 slots.  _get_required_slots() is smart enough to know if
+        # slot requirements can be met by existing slots in the cluster.
+        #
+        # max_cluster_slots = max_size * instance_properties.get("slots")
+        # pending_jobs = get_pending_jobs_info(max_slots_filter=max_cluster_slots, skip_if_state=SGE_HOLD_STATE)
+        # return len(pending_jobs) > 0, False
+        return _get_required_slots(instance_properties, max_size) > 0, False
     except Exception as e:
         log.error("Failed when checking for pending jobs with exception %s. Reporting no pending jobs.", e)
         return False, True
