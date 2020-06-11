@@ -10,6 +10,7 @@
 # limitations under the License.
 import collections
 import logging
+import pprint
 import re
 from xml.etree import ElementTree
 
@@ -18,6 +19,7 @@ from common.remote_command_executor import RemoteCommandExecutor
 from common.schedulers.converters import ComparableObject, from_xml_to_obj
 from common.sge import check_sge_command_output, run_sge_command
 
+pp = pprint.PrettyPrinter(indent=4)
 QConfCommand = collections.namedtuple("QConfCommand", ["command_flags", "successful_messages", "description"])
 
 QCONF_COMMANDS = {
@@ -180,7 +182,12 @@ def _run_sge_command_for_multiple_hosts(hosts, command_template):
 
 
 def _run_qstat(full_format=False, hostname_filter=None, job_state_filter=None):
-    command = "qstat -xml -g dt -u '*'"
+    # CEREBRAS MODIFICATION
+    # =====================
+    #
+    # command = "qstat -xml -g dt -u '*'"
+    # Add -r to the qstat command to capture resource requirements of job
+    command = "qstat -r -xml -g dt -u '*'"
     if full_format:
         command += " -f"
     if hostname_filter:
@@ -225,8 +232,11 @@ def get_pending_jobs_info(max_slots_filter=None, skip_if_state=None, log_pending
     if log_pending_jobs:
         logging.info("The pending jobs are: {0}".format(pending_jobs))
     if max_slots_filter or skip_if_state:
+        vcs_jobs = 0
+        vcs_jobs_ignore_after = 2
         filtered_jobs = []
         for job in pending_jobs:
+            #logging.info("job: " + pp.pformat(job))
             if max_slots_filter and job.slots > max_slots_filter:
                 logging.info(
                     "Skipping job %s since required slots (%d) exceed max slots (%d)",
@@ -236,6 +246,33 @@ def get_pending_jobs_info(max_slots_filter=None, skip_if_state=None, log_pending
                 )
             elif skip_if_state and skip_if_state in job.state:
                 logging.info("Skipping job %s since in state %s", job.number, job.state)
+            elif hasattr(job, "hard_request") and \
+                 any(["vcs" in s for s in [list(k)[0] for k in [s.keys() for s in job.hard_request]]]):
+                 # CEREBRAS MODIFICATION
+                 # =====================
+                 #
+                 # Right now all license limited hard resources are prefixed
+                 # with "vcs".  If a job is pending with the "vcs" resource
+                 # requirement, it is either a job that is waiting for a new
+                 # compute node to spin up, or it is license limited.  It is
+                 # slightly more involved to distinguish between these two cases
+                 # so we have a compromise here.  We allow the first N pending
+                 # jobs get treated as normal, but filter out jobs after
+                 # that.  (N corresponds to the vcs_jobs_ignore_after variable.)
+                 #
+                 # When we are license limited, this means we may still spin up
+                 # unnecessary compute nodes, but this is a necessary evil
+                 # because it's possible that we really are compute slot limited
+                 # rather than license limited.
+
+                 #logging.info(pp.pformat([list(k)[0] for k in [s.keys() for s in job.hard_request]]))
+                 if vcs_jobs >= vcs_jobs_ignore_after:
+                     logging.info("Skipping job %s because we have more than %d vcs jobs pending",
+                                  pp.pformat(job),
+                                  vcs_jobs_ignore_after)
+                 else:
+                     vcs_jobs += 1
+                     filtered_jobs.append(job)
             else:
                 filtered_jobs.append(job)
 
@@ -257,6 +294,7 @@ class SgeJob(ComparableObject):
     # </job_list>
     MAPPINGS = {
         "JB_job_number": {"field": "number"},
+        "hard_request": {"field": "hard_request"},
         "slots": {"field": "slots", "transformation": int},
         "state": {"field": "state"},
         "master": {"field": "node_type"},
