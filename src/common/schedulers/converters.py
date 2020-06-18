@@ -46,6 +46,41 @@ def from_xml_to_obj(xml, obj_type):
                 input = result.text
                 if input:
                     input = input.strip()
+            # CEREBRAS MODIFICATION
+            # =====================
+            #
+            # When including hard resources, the XML looks like:
+            #
+            # <job_list state="pending">
+            #   <JB_job_number>12422</JB_job_number>
+            #   <JAT_prio>0.00000</JAT_prio>
+            #   <JB_name>simulate-build-fyn-rtl_dev</JB_name>
+            #   <JB_owner>build</JB_owner>
+            #   <state>qw</state>
+            #   <JB_submission_time>2019-10-02T21:25:11</JB_submission_time>
+            #   <queue_name></queue_name>
+            #   <slots>1</slots>
+            #   <full_job_name>simulate-build-fyn-rtl_dev</full_job_name>
+            #   <requested_pe name="smp">1</requested_pe>
+            #   <hard_request name="vcs" resource_contribution="0.000000">TRUE</hard_request>
+            #   <hard_request name="vcs_build" resource_contribution="0.000000">TRUE</hard_request>
+            #   <hard_request name="h_rt" resource_contribution="0.000000">86400</hard_request>
+            #   <hard_request name="s_rt" resource_contribution="0.000000">86400</hard_request>
+            # ...
+            #
+            # We want to capture all the hard_requests here.  So if we see
+            # "name" in the attributes, we turn that into a key value pair,
+            # and append to the values list.
+            #
+            # Resulting job after mapping then looks like:
+            #     SgeJob(number='12422', slots=1, state='qw', node_type=None,
+            #            array_index=None, hostname=None,
+            #            hard_request=[{'vcs': 'TRUE'},
+            #                          {'vcs_build': 'TRUE'},
+            #                          {'h_rt': '86400'},
+            #                          {'s_rt': '86400'}])
+            if "name" in result.attrib:
+                input = {result.attrib["name"] : input}
             values.append(input if transformation_func is None else transformation_func(input))
         if values:
             setattr(obj, mapping["field"], values[0] if len(values) == 1 else values)
